@@ -76,7 +76,7 @@ Configure these repository Actions secrets before publishing:
 | Secret | Purpose |
 | --- | --- |
 | `USER_DOCKERHUB` | Docker Hub username and image namespace |
-| `PAT_DOCKERHUB` | Docker Hub access token with push permission |
+| `PAT_DOCKERHUB` | Docker Hub access token with push permission; overview sync requires read/write/delete scope |
 | `URL_AZURECONTAINERREG` | Registry hostname, e.g. `example.azurecr.io`, or its HTTPS origin; no repository path |
 | `USER_AZURECONTAINERREG` | Registry login username |
 | `PW_AZURECONTAINERREG` | Registry password or token with push permission |
@@ -106,6 +106,9 @@ Ensure `luth2` can be assigned to repository PRs.
 - Dependabot checks workflow Actions and release/documentation npm tooling weekly;
 	all its PRs and all other newly opened/reopened PRs are assigned to `luth2`.
 - `pages.yml`: publishes this README as English/German documentation.
+- `dockerhub-overview.yml`: syncs this README to the Docker Hub repository overview
+	on README changes to `main` or a manual run. The existing `PAT_DOCKERHUB` must have
+	read/write/delete scope; a push-only token is insufficient for this action.
 
 Runner-update PRs use `GITHUB_TOKEN`, which does not trigger normal PR CI workflows.
 Manually run **Validate, release and publish containers** on the update branch to
@@ -268,6 +271,10 @@ Pfad gemountet sind. Das Socket-Beispiel deckt JavaScript-Actions und gestreamte
 Der Runner-Update-Workflow prueft taeglich um 06:23 UTC offizielle stabile Releases
 aus `actions/runner`. Beide Downloads und SHA256-Pruefsummen muessen vorliegen.
 Ein `fix(deps)`-PR aktualisiert beide Dockerfiles und wird `luth2` zugewiesen.
+Der Workflow `dockerhub-overview.yml` synchronisiert diese README als Docker-Hub-Overview
+bei README-Aenderungen auf `main` oder einem manuellen Run. `PAT_DOCKERHUB` braucht
+dafuer den Scope read/write/delete; reine Push-Rechte reichen fuer diese Action nicht.
+
 Dependabot aktualisiert Actions und npm-Werkzeuge woechentlich. Auch alle anderen
 neu erstellten oder wieder geoeffneten PRs werden `luth2` zugewiesen.
 

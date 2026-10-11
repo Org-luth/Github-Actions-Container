@@ -1,0 +1,35 @@
+name: Update Docker Hub overview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - .github/workflows/dockerhub-overview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-overview
+  cancel-in-progress: false
+
+jobs:
+  overview:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Sync repository README to Docker Hub
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.USER_DOCKERHUB }}
+          password: ${{ secrets.PAT_DOCKERHUB }}
+          repository: ${{ secrets.USER_DOCKERHUB }}/github-actions-runner
+          readme-filepath: ./README.md
+          short-description: 'Self-hosted GitHub Actions runners: Ubuntu 24.04 and Windows Server Core LTSC 2022 (x64).'
