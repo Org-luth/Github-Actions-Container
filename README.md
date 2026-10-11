@@ -14,9 +14,12 @@ Self-hosted GitHub-Actions-Runner fuer Ubuntu 24.04 und Windows Server Core LTSC
 Both images target x64. The Linux image uses **Ubuntu 24.04**; the Windows image uses
 **Windows Server Core LTSC 2022** and requires a compatible Windows container host.
 A Linux Docker engine cannot run the Windows image.
-The Linux Dockerfile uses a separate download/extraction stage. The runner folder and
-Docker repository key are copied into the final image, which includes Docker CLI,
-Buildx, Git, certificates and required runtime libraries, but no Docker daemon.
+Both Dockerfiles use separate download/extraction stages. Their final images include
+the runner, Docker CLI, Buildx and Git, but no Docker daemon or download archives.
+Linux also includes the Docker repository key, certificates and required runtime libraries.
+Windows uses SHA256-verified static Docker/Buildx binaries and MinGit for command-line Git;
+MinGit does not provide a general-purpose Git Bash shell. Windows tool versions and hashes
+are pinned in build arguments and must be updated together; the automatic updater only updates the runner.
 
 | Platform | Version tag (example) | Moving tag |
 | --- | --- | --- |
@@ -164,6 +167,31 @@ container: never run untrusted PRs on this runner. Container-based Actions and `
 also require runner work directories mounted at the same absolute path on host and runner;
 the socket-only example is for JavaScript Actions and streamed Docker build contexts.
 
+### Docker builds on the Windows runner
+
+Start on a compatible, dedicated Windows container host with its Docker engine pipe:
+
+```powershell
+docker run -d --name gha-windows-docker `
+	-e RUNNER_URL -e RUNNER_TOKEN -e RUNNER_NAME `
+	--mount 'type=npipe,source=\\.\pipe\docker_engine,target=\\.\pipe\docker_engine' `
+	<dockerhub-user>/github-actions-runner:latest-windows
+docker exec gha-windows-docker docker info
+```
+
+The runner and jobs run as `ContainerAdministrator`, so jobs can install tools without
+`sudo`. Git, Docker CLI and Buildx are available on startup; no Docker service starts
+inside the container. The named pipe gives jobs administrative control over the **host**
+Docker engine: only run trusted workflows and never unreviewed PRs.
+
+For native Windows image builds, use PowerShell steps with `docker build`, `docker login`
+and `docker push`; set `$env:DOCKER_BUILDKIT = '0'` for the legacy Windows builder.
+Installing Buildx does not install a BuildKit server. Windows BuildKit support is
+experimental and requires a separately configured compatible remote builder. The Linux
+`docker/setup-buildx-action` example above is not a drop-in Windows configuration.
+Docker container Actions and `jobs.container` are unsupported on Windows runners.
+Building Linux images requires a remote Linux engine or BuildKit builder, not the local Windows engine.
+
 ### Operations and local checks
 
 ```bash
@@ -185,11 +213,12 @@ inspect the container's configured environment. Do not bake credentials into ima
 These are persistent runners: shutdown does **not** automatically deregister them.
 Delete stale registrations in GitHub when replacing/removing containers. Jobs share
 the runner workspace until the container is recreated; only run trusted workflows.
-No Docker socket or language-specific build toolchains are included. The Linux image includes Git;
-install additional tools, including Git on Windows, as your jobs require.
+No host Docker socket/pipe or language-specific build toolchains are included. Both images
+include command-line Git; install additional tools as your jobs require.
 The Linux `runner` user has passwordless `sudo`: jobs can run `sudo apt-get update`
 and `sudo apt-get install -y <package>`. This grants full root access inside the
 container; use it only for trusted workflows. The runner itself starts as a non-root user.
+Windows starts as `ContainerAdministrator`, with full administrative rights inside the container.
 Runner self-updates remain enabled; rebuild and redeploy for fresh base-image patches.
 
 Both Dockerfiles declare `owner=luth2` and the OCI author `luth2 (https://github.com/luth2)`.
@@ -203,9 +232,12 @@ credentials, and publishing runs only on trusted `main`; review `npm audit` befo
 
 Beide Images sind fuer x64: **Ubuntu 24.04** beziehungsweise **Windows Server Core
 LTSC 2022**. Windows benoetigt einen kompatiblen Windows-Containerhost, keine Linux-Engine.
-Der Linux-Multistage-Build trennt Download und Entpacken vom Laufzeitimage. Dieses
-enthaelt den Runner-Ordner, den Docker-Repository-Schluessel, Docker CLI, Buildx,
-Git, Zertifikate und erforderliche Laufzeitbibliotheken, aber keinen Docker-Daemon.
+Beide Multistage-Builds trennen Download und Entpacken vom Laufzeitimage. Dieses
+enthaelt Runner, Docker CLI, Buildx und Git, aber keinen Docker-Daemon oder Downloadarchive.
+Linux enthaelt ausserdem den Docker-Repository-Schluessel, Zertifikate und Laufzeitbibliotheken.
+Windows verwendet SHA256-gepruefte Docker-/Buildx-Binaerdateien und MinGit fuer die
+Git-Kommandozeile, ohne allgemeine Git-Bash-Shell. Windows-Werkzeugversionen und Hashes
+sind als Build-Argumente festgelegt und gemeinsam zu aktualisieren; der automatische Updater pflegt nur den Runner.
 Veroeffentlicht wird nach Docker Hub und in die private Registry, jeweils unter
 `github-actions-runner`. Tags sind beispielsweise `1.0.0-ubuntu24.04` und
 `1.0.0-windows`; bewegliche Tags heissen `latest-ubuntu24.04` und `latest-windows`.
@@ -266,6 +298,24 @@ oder ungeprueften PRs darauf ausfuehren. Container-Actions und `jobs.container` 
 zusaetzlich Arbeitsverzeichnisse, die auf Host und Runner unter demselben absoluten
 Pfad gemountet sind. Das Socket-Beispiel deckt JavaScript-Actions und gestreamte Build-Kontexte ab.
 
+### Docker-Builds auf dem Windows-Runner
+
+Der PowerShell-Startbefehl im englischen Windows-Docker-Abschnitt bindet die Named Pipe
+`\\.\pipe\docker_engine` des Windows-Hosts ein. `docker exec gha-windows-docker docker info`
+prueft die Verbindung. Der Runner startet als `ContainerAdministrator`: Jobs koennen
+Werkzeuge direkt installieren, ohne `sudo`. Docker CLI, Buildx und Git sind vorinstalliert;
+im Container wird kein Docker-Dienst gestartet.
+
+Die Named Pipe gibt Jobs administrative Kontrolle ueber die Docker-Engine des **Hosts**:
+nur vertrauenswuerdige Workflows, keine ungeprueften PRs ausfuehren.
+Fuer Windows-Images nutze PowerShell-Schritte mit `docker build`, `docker login` und
+`docker push`; `$env:DOCKER_BUILDKIT = '0'` waehlt den klassischen Windows-Builder.
+Buildx bringt keinen BuildKit-Server mit. Windows-BuildKit ist experimentell und
+braucht einen separat konfigurierten kompatiblen Remote-Builder; das Linux-Action-Beispiel
+ist nicht unveraendert auf Windows uebertragbar. Container-Actions und `jobs.container`
+werden auf Windows-Runnern nicht unterstuetzt. Linux-Images brauchen eine entfernte
+Linux-Engine oder einen passenden BuildKit-Builder, nicht die lokale Windows-Engine.
+
 ### Automatische Pflege und Betrieb
 
 Der Runner-Update-Workflow prueft taeglich um 06:23 UTC offizielle stabile Releases
@@ -293,12 +343,13 @@ Keine Secrets ins Image schreiben.
 
 Beim Stoppen erfolgt keine automatische Abmeldung. Entferne veraltete Runner in
 GitHub. Persistente Runner teilen ihren Arbeitsbereich zwischen Jobs: nur
-vertrauenswuerdige Workflows ausfuehren. Docker-Socket und Sprach-Toolchains sind
-nicht enthalten; unter Windows auch Git bei Bedarf installieren. Runner-Selbstupdates
+vertrauenswuerdige Workflows ausfuehren. Host-Docker-Socket/-Pipe und Sprach-Toolchains sind
+nicht enthalten; Git ist in beiden Images vorhanden. Runner-Selbstupdates
 bleiben aktiv. Fuer aktuelle Basisimage-Patches Images neu bauen und Container ersetzen.
 Der Linux-Benutzer `runner` hat passwortloses `sudo`, etwa fuer `sudo apt-get update`
 und `sudo apt-get install -y <paket>`. Jobs erhalten damit volle Root-Rechte im
 Container: nur vertrauenswuerdige Workflows ausfuehren. Der Runner startet weiterhin ohne Root-Rechte.
+Windows startet als `ContainerAdministrator` mit vollen Administratorrechten im Container.
 
 Lokale Pruefung: `npm ci --ignore-scripts`, `npm test`, `npm run docs:build`.
 Die generierte zweisprachige Seite liegt unter `docs/_site/`.

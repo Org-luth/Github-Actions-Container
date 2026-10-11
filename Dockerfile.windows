@@ -1,16 +1,44 @@
 # escape=`
-FROM mcr.microsoft.com/windows/servercore:ltsc2022
-
-LABEL owner="luth2" `
-    org.opencontainers.image.authors="luth2 (https://github.com/luth2)"
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build
 
 SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
+ARG DOCKER_VERSION=29.9.0
+ARG DOCKER_SHA256=e3ff5d2e4cd1ad7e1c9bcb76f0df28a84853c43416a915323f08659d8487ad83
+ARG BUILDX_VERSION=0.38.0
+ARG BUILDX_SHA256=b39784aed5b3f9b24d1971bbcbad8c8206033fa63ed4fea82c9141728fe0ea26
+ARG GIT_VERSION=2.56.0.2
+ARG GIT_RELEASE=v2.56.0.windows.2
+ARG GIT_SHA256=da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be
+
+WORKDIR C:\downloads
+
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Invoke-WebRequest -UseBasicParsing `
+        -Uri ('https://download.docker.com/win/static/stable/x86_64/docker-{0}.zip' -f $env:DOCKER_VERSION) `
+        -OutFile docker.zip; `
+    if ((Get-FileHash -Path docker.zip -Algorithm SHA256).Hash -ne $env:DOCKER_SHA256) { throw 'Docker checksum did not match' }; `
+    Expand-Archive -Path docker.zip -DestinationPath C:\tools; `
+    Remove-Item docker.zip; `
+    Remove-Item C:\tools\docker\dockerd.exe
+
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    New-Item -Path C:\tools\cli-plugins -ItemType Directory -Force | Out-Null; `
+    Invoke-WebRequest -UseBasicParsing `
+        -Uri ('https://github.com/docker/buildx/releases/download/v{0}/buildx-v{0}.windows-amd64.exe' -f $env:BUILDX_VERSION) `
+        -OutFile C:\tools\cli-plugins\docker-buildx.exe; `
+    if ((Get-FileHash -Path C:\tools\cli-plugins\docker-buildx.exe -Algorithm SHA256).Hash -ne $env:BUILDX_SHA256) { throw 'Buildx checksum did not match' }
+
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Invoke-WebRequest -UseBasicParsing `
+        -Uri ('https://github.com/git-for-windows/git/releases/download/{0}/MinGit-{1}-64-bit.zip' -f $env:GIT_RELEASE, $env:GIT_VERSION) `
+        -OutFile git.zip; `
+    if ((Get-FileHash -Path git.zip -Algorithm SHA256).Hash -ne $env:GIT_SHA256) { throw 'Git checksum did not match' }; `
+    Expand-Archive -Path git.zip -DestinationPath C:\tools\git; `
+    Remove-Item git.zip
+
 ARG RUNNER_VERSION=2.337.0
 ARG RUNNER_SHA256=1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc
-
-ENV RUNNER_URL="" `
-    RUNNER_NAME=""
 
 WORKDIR C:\actions-runner
 
@@ -20,13 +48,36 @@ RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tl
         -OutFile runner.zip; `
     if ((Get-FileHash -Path runner.zip -Algorithm SHA256).Hash -ne $env:RUNNER_SHA256) { throw 'Runner checksum did not match' }; `
     Expand-Archive -Path runner.zip -DestinationPath .; `
-    Remove-Item runner.zip; `
-    icacls C:\actions-runner /grant '*S-1-5-93-2-2:(OI)(CI)M' /T; `
-    if ($LASTEXITCODE -ne 0) { throw 'Could not grant runner directory permissions' }
+    Remove-Item runner.zip
 
-USER ContainerUser
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS runtime
+
+LABEL owner="luth2" `
+    org.opencontainers.image.authors="luth2 (https://github.com/luth2)"
+
+SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+ENV RUNNER_URL="" `
+    RUNNER_NAME="" `
+    PATH="C:\docker;C:\git\cmd;${PATH}"
+
+WORKDIR C:\actions-runner
+
+COPY --from=build C:/actions-runner/ ./
+COPY --from=build C:/tools/docker/docker.exe C:/docker/docker.exe
+COPY --from=build ["C:/tools/cli-plugins/", "C:/Program Files/Docker/cli-plugins/"]
+COPY --from=build C:/tools/git/ C:/git/
+
+USER ContainerAdministrator
 
 RUN New-Item -Path .permissions-check -ItemType File -ErrorAction Stop | Out-Null; `
-    Remove-Item -LiteralPath .permissions-check -ErrorAction Stop
+    Remove-Item -LiteralPath .permissions-check -ErrorAction Stop; `
+    New-Item -Path _diag, _work -ItemType Directory -Force | Out-Null; `
+    git --version; `
+    if ($LASTEXITCODE -ne 0) { throw 'Git is not available' }; `
+    docker --version; `
+    if ($LASTEXITCODE -ne 0) { throw 'Docker CLI is not available' }; `
+    docker buildx version; `
+    if ($LASTEXITCODE -ne 0) { throw 'Docker Buildx is not available' }
 
 CMD ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; if ([string]::IsNullOrWhiteSpace($env:RUNNER_URL)) { throw 'Set RUNNER_URL to the GitHub organization or repository URL' }; if ([string]::IsNullOrWhiteSpace($env:RUNNER_TOKEN)) { throw 'Set RUNNER_TOKEN to a GitHub runner registration token' }; if ([string]::IsNullOrWhiteSpace($env:RUNNER_NAME)) { throw 'Set RUNNER_NAME to the runner name and runs-on label' }; if (-not (Test-Path .runner)) { & .\\config.cmd --unattended --url $env:RUNNER_URL --token $env:RUNNER_TOKEN --name $env:RUNNER_NAME --labels $env:RUNNER_NAME --work _work --replace; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }; Remove-Item Env:RUNNER_TOKEN; & .\\run.cmd; exit $LASTEXITCODE"]

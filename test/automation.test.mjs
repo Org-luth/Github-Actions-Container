@@ -213,11 +213,28 @@ test('Linux startup requires URL, token and runner name', { skip: process.platfo
   }
 });
 
-test('Windows permissions use the ContainerUser SID and verify access without elevation', () => {
+test('Windows multi-stage build includes verified clients and runs as administrator', () => {
   const dockerfile = read('Dockerfile.windows');
-  assert(dockerfile.includes("icacls C:\\actions-runner /grant '*S-1-5-93-2-2:(OI)(CI)M' /T"));
-  assert(!dockerfile.includes('/grant \'ContainerUser:'));
-  assert.match(dockerfile, /USER ContainerUser\s+RUN New-Item -Path \.permissions-check[\s\S]*?Remove-Item -LiteralPath \.permissions-check/);
+  const [build, runtime] = dockerfile.split('FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS runtime');
+  assert(build.includes('FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build'));
+  assert(runtime);
+  for (const name of ['RUNNER', 'DOCKER', 'BUILDX', 'GIT']) {
+    assert.equal([...dockerfile.matchAll(new RegExp(`^ARG ${name}_VERSION=`, 'gm'))].length, 1);
+    assert.match(build, new RegExp(`^ARG ${name}_SHA256=[a-f0-9]{64}$`, 'm'));
+    assert(build.includes(`.Hash -ne $env:${name}_SHA256`));
+  }
+  assert(build.includes('Remove-Item C:\\tools\\docker\\dockerd.exe'));
+  assert(runtime.includes('COPY --from=build C:/actions-runner/ ./'));
+  assert(runtime.includes('COPY --from=build C:/tools/docker/docker.exe C:/docker/docker.exe'));
+  assert(runtime.includes('COPY --from=build ["C:/tools/cli-plugins/", "C:/Program Files/Docker/cli-plugins/"]'));
+  assert(runtime.includes('COPY --from=build C:/tools/git/ C:/git/'));
+  assert(runtime.includes('PATH="C:\\docker;C:\\git\\cmd;${PATH}"'));
+  assert(!/Invoke-WebRequest|Expand-Archive|dockerd|icacls|ContainerUser/.test(runtime));
+  assert.match(runtime, /USER ContainerAdministrator\s+RUN New-Item -Path \.permissions-check[\s\S]*?Remove-Item -LiteralPath \.permissions-check/);
+  assert(runtime.includes('New-Item -Path _diag, _work -ItemType Directory -Force'));
+  for (const command of ['git --version', 'docker --version', 'docker buildx version']) {
+    assert(runtime.includes(`${command}; \`\n    if ($LASTEXITCODE -ne 0)`));
+  }
 });
 
 test('PowerShell build commands and Windows startup parse correctly', { skip: !powerShellAvailable }, () => {
@@ -225,8 +242,9 @@ test('PowerShell build commands and Windows startup parse correctly', { skip: !p
   const dockerfile = read('Dockerfile.windows');
   const command = JSON.parse(dockerfile.split('\n').find(line => line.startsWith('CMD ')).slice(4)).at(-1);
   scripts.push(command);
-  scripts.push(dockerfile.match(/\nRUN ([\s\S]*?)\n\nUSER/)[1].replace(/`\r?\n\s*/g, ' '));
-  scripts.push(dockerfile.match(/\nUSER ContainerUser\s+RUN ([\s\S]*?)\n\nCMD/)[1].replace(/`\r?\n\s*/g, ' '));
+  const buildCommands = [...dockerfile.replace(/`\r?\n\s*/g, ' ').matchAll(/^RUN (.+)$/gm)].map(match => match[1]);
+  assert.equal(buildCommands.length, 5);
+  scripts.push(...buildCommands);
   for (const script of scripts) {
     const result = spawnSync(powerShell, ['-NoLogo', '-NoProfile', '-Command',
       '$tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($env:SCRIPT_TO_CHECK, [ref]$tokens, [ref]$parseErrors); if ($parseErrors.Count) { $parseErrors | Out-String | Write-Error; exit 1 }'],
