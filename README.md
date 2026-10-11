@@ -14,6 +14,9 @@ Self-hosted GitHub-Actions-Runner fuer Ubuntu 24.04 und Windows Server Core LTSC
 Both images target x64. The Linux image uses **Ubuntu 24.04**; the Windows image uses
 **Windows Server Core LTSC 2022** and requires a compatible Windows container host.
 A Linux Docker engine cannot run the Windows image.
+The Linux Dockerfile uses a separate download/extraction stage. The runner folder and
+Docker repository key are copied into the final image, which includes Docker CLI,
+Buildx, Git, certificates and required runtime libraries, but no Docker daemon.
 
 | Platform | Version tag (example) | Moving tag |
 | --- | --- | --- |
@@ -113,6 +116,51 @@ If image publishing fails after a release was created, rerun the workflow: it re
 the existing version at that commit. Older releases cannot overwrite `latest` through a rerun.
 Registry pushes are not transactional; a failed run can leave one registry or platform updated.
 
+### Docker builds on the Linux runner
+
+The Linux image includes Docker CLI and Buildx from Docker's signed APT repository.
+It connects to a host Docker engine; it does not start Docker-in-Docker.
+Start it on a dedicated Linux Docker host with the socket and its numeric group ID:
+
+```bash
+docker run -d --name gha-docker \
+	-e RUNNER_URL -e RUNNER_TOKEN -e RUNNER_NAME \
+	--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+	--group-add "$(stat -c '%g' /var/run/docker.sock)" \
+	<dockerhub-user>/github-actions-runner:latest-ubuntu24.04
+```
+
+Set `RUNNER_NAME=docker-runner` for this workflow example:
+
+```yaml
+jobs:
+	image:
+		runs-on: [self-hosted, Linux, X64, docker-runner]
+		permissions:
+			contents: read
+		steps:
+			- uses: actions/checkout@v6
+			- uses: docker/setup-buildx-action@v3
+			- uses: docker/login-action@v3
+				with:
+					username: ${{ secrets.USER_DOCKERHUB }}
+					password: ${{ secrets.PAT_DOCKERHUB }}
+			- uses: docker/build-push-action@v6
+				with:
+					context: .
+					file: Dockerfile
+					push: true
+					tags: ${{ secrets.USER_DOCKERHUB }}/my-image:latest
+```
+
+Use the Dockerfile path in the job's repository, e.g. `Dockerfile.linux` when building
+this project. Verify daemon access with `docker exec gha-docker docker info`.
+No `--privileged` or world-writable socket permissions are needed.
+The socket gives workflows effectively root access to the **host**, not just the runner
+container: never run untrusted PRs on this runner. Container-based Actions and `jobs.container`
+also require runner work directories mounted at the same absolute path on host and runner;
+the socket-only example is for JavaScript Actions and streamed Docker build contexts.
+
 ### Operations and local checks
 
 ```bash
@@ -134,8 +182,11 @@ inspect the container's configured environment. Do not bake credentials into ima
 These are persistent runners: shutdown does **not** automatically deregister them.
 Delete stale registrations in GitHub when replacing/removing containers. Jobs share
 the runner workspace until the container is recreated; only run trusted workflows.
-No Docker socket or extra build toolchains are included. The Linux image includes Git;
+No Docker socket or language-specific build toolchains are included. The Linux image includes Git;
 install additional tools, including Git on Windows, as your jobs require.
+The Linux `runner` user has passwordless `sudo`: jobs can run `sudo apt-get update`
+and `sudo apt-get install -y <package>`. This grants full root access inside the
+container; use it only for trusted workflows. The runner itself starts as a non-root user.
 Runner self-updates remain enabled; rebuild and redeploy for fresh base-image patches.
 
 Both Dockerfiles declare `owner=luth2` and the OCI author `luth2 (https://github.com/luth2)`.
@@ -149,6 +200,9 @@ credentials, and publishing runs only on trusted `main`; review `npm audit` befo
 
 Beide Images sind fuer x64: **Ubuntu 24.04** beziehungsweise **Windows Server Core
 LTSC 2022**. Windows benoetigt einen kompatiblen Windows-Containerhost, keine Linux-Engine.
+Der Linux-Multistage-Build trennt Download und Entpacken vom Laufzeitimage. Dieses
+enthaelt den Runner-Ordner, den Docker-Repository-Schluessel, Docker CLI, Buildx,
+Git, Zertifikate und erforderliche Laufzeitbibliotheken, aber keinen Docker-Daemon.
 Veroeffentlicht wird nach Docker Hub und in die private Registry, jeweils unter
 `github-actions-runner`. Tags sind beispielsweise `1.0.0-ubuntu24.04` und
 `1.0.0-windows`; bewegliche Tags heissen `latest-ubuntu24.04` und `latest-windows`.
@@ -191,6 +245,24 @@ Nach dem Release baut die Matrix Ubuntu und Windows auf passenden Hosts, prueft 
 Runner-Binaerdatei und pusht Versionstags und bewegliche Tags in beide Registries.
 PRs bauen und testen ohne Registry-Secrets und ohne Push. npm wird nicht veroeffentlicht.
 
+### Docker-Builds auf dem Linux-Runner
+
+Docker CLI und Buildx sind installiert, aber kein Docker-Daemon. Verwende den
+Startbefehl im englischen Abschnitt auf einem dedizierten Linux-Dockerhost: Er bindet
+`/var/run/docker.sock` ein und uebergibt dessen numerische Gruppen-ID mit `--group-add`.
+Dadurch kann `runner` ohne `sudo` auf Docker zugreifen. Kein `--privileged` und kein
+`chmod 666` auf dem Socket sind erforderlich.
+
+Mit `RUNNER_NAME=docker-runner` kannst du die gezeigten Actions `docker/setup-buildx-action`,
+`docker/login-action` und `docker/build-push-action` verwenden. Passe Image-Tag und
+Dockerfile-Pfad an das jeweilige Repository an. `docker exec gha-docker docker info`
+prueft den Zugriff auf den Host-Daemon.
+
+Der Socket gibt Jobs praktisch Root-Kontrolle ueber den **Host**: keine unbekannten
+oder ungeprueften PRs darauf ausfuehren. Container-Actions und `jobs.container` brauchen
+zusaetzlich Arbeitsverzeichnisse, die auf Host und Runner unter demselben absoluten
+Pfad gemountet sind. Das Socket-Beispiel deckt JavaScript-Actions und gestreamte Build-Kontexte ab.
+
 ### Automatische Pflege und Betrieb
 
 Der Runner-Update-Workflow prueft taeglich um 06:23 UTC offizielle stabile Releases
@@ -214,9 +286,12 @@ Keine Secrets ins Image schreiben.
 
 Beim Stoppen erfolgt keine automatische Abmeldung. Entferne veraltete Runner in
 GitHub. Persistente Runner teilen ihren Arbeitsbereich zwischen Jobs: nur
-vertrauenswuerdige Workflows ausfuehren. Docker-Socket und weitere Toolchains sind
+vertrauenswuerdige Workflows ausfuehren. Docker-Socket und Sprach-Toolchains sind
 nicht enthalten; unter Windows auch Git bei Bedarf installieren. Runner-Selbstupdates
 bleiben aktiv. Fuer aktuelle Basisimage-Patches Images neu bauen und Container ersetzen.
+Der Linux-Benutzer `runner` hat passwortloses `sudo`, etwa fuer `sudo apt-get update`
+und `sudo apt-get install -y <paket>`. Jobs erhalten damit volle Root-Rechte im
+Container: nur vertrauenswuerdige Workflows ausfuehren. Der Runner startet weiterhin ohne Root-Rechte.
 
 Lokale Pruefung: `npm ci --ignore-scripts`, `npm test`, `npm run docs:build`.
 Die generierte zweisprachige Seite liegt unter `docs/_site/`.

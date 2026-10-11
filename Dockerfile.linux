@@ -1,33 +1,57 @@
-FROM ubuntu:24.04
-
-LABEL owner="luth2" \
-    org.opencontainers.image.authors="luth2 (https://github.com/luth2)"
+FROM ubuntu:24.04 AS build
 
 ARG RUNNER_VERSION=2.337.0
 ARG RUNNER_SHA256=70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613
 
-ENV RUNNER_URL="" \
-    RUNNER_NAME="" \
-    HOME=/home/runner
-
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git gzip tar unzip \
-    && useradd --create-home --shell /bin/bash runner \
-    && mkdir -p /home/runner/actions-runner \
+    && apt-get install -y --no-install-recommends ca-certificates curl gzip tar \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /home/runner/actions-runner
+WORKDIR /actions-runner
 
 RUN curl --fail --location --retry 3 \
         "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
         --output runner.tar.gz \
     && printf '%s  runner.tar.gz\n' "${RUNNER_SHA256}" | sha256sum --check - \
     && tar -xzf runner.tar.gz \
-    && rm runner.tar.gz \
-    && ./bin/installdependencies.sh \
-    && rm -rf /var/lib/apt/lists/* \
-    && chown -R runner:runner /home/runner/actions-runner
+    && rm runner.tar.gz
+
+RUN curl --fail --location --retry 3 https://download.docker.com/linux/ubuntu/gpg \
+        --output /docker.asc \
+    && chmod 0644 /docker.asc
+
+FROM ubuntu:24.04 AS runtime
+
+LABEL owner="luth2" \
+    org.opencontainers.image.authors="luth2 (https://github.com/luth2)"
+
+ENV RUNNER_URL="" \
+    RUNNER_NAME="" \
+    HOME=/home/runner
+
+COPY --from=build /docker.asc /etc/apt/keyrings/docker.asc
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$(dpkg --print-architecture)" \
+        > /etc/apt/sources.list.d/docker.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        docker-ce-cli docker-buildx-plugin git libgcc-s1 libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 libstdc++6 sudo zlib1g \
+    && useradd --create-home --shell /bin/bash runner \
+    && printf 'runner ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/runner \
+    && chmod 0440 /etc/sudoers.d/runner \
+    && visudo -c \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /home/runner/actions-runner
+
+COPY --from=build --chown=runner:runner /actions-runner/ ./
 
 USER runner
+
+RUN sudo -n true \
+    && docker --version \
+    && docker buildx version
 
 CMD ["bash", "-c", "set -euo pipefail; : \"${RUNNER_URL:?Set RUNNER_URL to the GitHub organization or repository URL}\"; : \"${RUNNER_TOKEN:?Set RUNNER_TOKEN to a GitHub runner registration token}\"; : \"${RUNNER_NAME:?Set RUNNER_NAME to the runner name and runs-on label}\"; if [[ ! -f .runner ]]; then ./config.sh --unattended --url \"$RUNNER_URL\" --token \"$RUNNER_TOKEN\" --name \"$RUNNER_NAME\" --labels \"$RUNNER_NAME\" --work _work --replace; fi; unset RUNNER_TOKEN; exec ./run.sh"]

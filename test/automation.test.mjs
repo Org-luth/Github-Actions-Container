@@ -20,6 +20,35 @@ test('both images declare luth2 as owner and OCI author', () => {
   }
 });
 
+test('Linux multi-stage build isolates downloads and retains its runtime dependencies', () => {
+  const dockerfile = read('Dockerfile.linux');
+  const [build, runtime] = dockerfile.split('FROM ubuntu:24.04 AS runtime');
+  assert(build.startsWith('FROM ubuntu:24.04 AS build'));
+  assert(runtime);
+  assert(build.includes('sha256sum --check -'));
+  assert(build.includes('tar -xzf runner.tar.gz'));
+  assert.equal([...dockerfile.matchAll(/^ARG RUNNER_VERSION=/gm)].length, 1);
+  assert.equal([...dockerfile.matchAll(/^ARG RUNNER_SHA256=/gm)].length, 1);
+  assert(runtime.includes('COPY --from=build --chown=runner:runner /actions-runner/ ./'));
+  assert(runtime.includes('USER runner'));
+  assert(runtime.includes('--no-install-recommends'));
+  for (const dependency of ['ca-certificates', 'docker-ce-cli', 'docker-buildx-plugin', 'git', 'libgcc-s1', 'libicu74', 'libkrb5-3', 'liblttng-ust1t64', 'libssl3t64', 'libstdc++6', 'sudo', 'zlib1g']) {
+    assert(runtime.includes(dependency), dependency);
+  }
+  assert(runtime.includes("printf 'runner ALL=(ALL:ALL) NOPASSWD: ALL\\n' > /etc/sudoers.d/runner"));
+  assert(runtime.includes('chmod 0440 /etc/sudoers.d/runner'));
+  assert(runtime.includes('visudo -c'));
+  assert.match(runtime, /USER runner\s+RUN sudo -n true/);
+  assert(build.includes('https://download.docker.com/linux/ubuntu/gpg'));
+  assert(runtime.includes('COPY --from=build /docker.asc /etc/apt/keyrings/docker.asc'));
+  assert(runtime.includes('Signed-By: /etc/apt/keyrings/docker.asc'));
+  assert(runtime.indexOf('apt-get install -y --no-install-recommends ca-certificates') < runtime.indexOf('/etc/apt/sources.list.d/docker.sources'));
+  assert(runtime.includes('docker --version'));
+  assert(runtime.includes('docker buildx version'));
+  assert(!/\b(docker-ce|containerd\.io|dockerd)\b(?!-)/.test(runtime));
+  assert(!/\b(curl|unzip|installdependencies\.sh)\b/.test(runtime));
+});
+
 test('workflow YAML is valid and has explicit permissions', () => {
   for (const file of readdirSync(new URL('.github/workflows/', root))) {
     const document = YAML.parseDocument(read(`.github/workflows/${file}`), { uniqueKeys: true });
@@ -180,12 +209,20 @@ test('Linux startup requires URL, token and runner name', { skip: process.platfo
   }
 });
 
+test('Windows permissions use the ContainerUser SID and verify access without elevation', () => {
+  const dockerfile = read('Dockerfile.windows');
+  assert(dockerfile.includes("icacls C:\\actions-runner /grant '*S-1-5-93-2-2:(OI)(CI)M' /T"));
+  assert(!dockerfile.includes('/grant \'ContainerUser:'));
+  assert.match(dockerfile, /USER ContainerUser\s+RUN New-Item -Path \.permissions-check[\s\S]*?Remove-Item -LiteralPath \.permissions-check/);
+});
+
 test('PowerShell build commands and Windows startup parse correctly', { skip: !powerShellAvailable }, () => {
   const scripts = workflow('release').jobs.build.steps.filter(step => step.run).map(step => step.run);
   const dockerfile = read('Dockerfile.windows');
   const command = JSON.parse(dockerfile.split('\n').find(line => line.startsWith('CMD ')).slice(4)).at(-1);
   scripts.push(command);
   scripts.push(dockerfile.match(/\nRUN ([\s\S]*?)\n\nUSER/)[1].replace(/`\r?\n\s*/g, ' '));
+  scripts.push(dockerfile.match(/\nUSER ContainerUser\s+RUN ([\s\S]*?)\n\nCMD/)[1].replace(/`\r?\n\s*/g, ' '));
   for (const script of scripts) {
     const result = spawnSync(powerShell, ['-NoLogo', '-NoProfile', '-Command',
       '$tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($env:SCRIPT_TO_CHECK, [ref]$tokens, [ref]$parseErrors); if ($parseErrors.Count) { $parseErrors | Out-String | Write-Error; exit 1 }'],
