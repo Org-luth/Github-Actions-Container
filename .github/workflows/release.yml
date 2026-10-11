@@ -1,0 +1,177 @@
+name: Validate, release and publish containers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Validate workflows and release rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run docs:build
+
+  release:
+    name: Semantic release
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.semantic.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Version and publish GitHub release
+        id: semantic
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build ${{ matrix.variant }}
+    needs: [check, release]
+    if: >-
+      always() && !cancelled() && needs.check.result == 'success' &&
+      (github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') ||
+      needs.release.outputs.version != '')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ubuntu24.04
+            runner: ubuntu-latest
+            dockerfile: Dockerfile.linux
+            os: linux
+            executable: /home/runner/actions-runner/bin/Runner.Listener
+          - variant: windows
+            runner: windows-2022
+            dockerfile: Dockerfile.windows
+            os: windows
+            executable: C:\actions-runner\bin\Runner.Listener.exe
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      VARIANT: ${{ matrix.variant }}
+      DOCKERFILE: ${{ matrix.dockerfile }}
+      EXPECTED_OS: ${{ matrix.os }}
+      RUNNER_EXECUTABLE: ${{ matrix.executable }}
+      RELEASE_VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Check container engine
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($IsWindows) {
+            $service = Get-Service docker
+            if ($service.Status -ne 'Running') { Start-Service docker }
+          }
+          $containerOS = docker info --format '{{.OSType}}'
+          if ($LASTEXITCODE -ne 0) { throw 'Docker engine is unavailable' }
+          if ($containerOS.Trim() -ne $env:EXPECTED_OS) { throw 'Docker engine does not match the matrix OS' }
+      - name: Build image
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = if ($env:RELEASE_VERSION) { $env:RELEASE_VERSION } else { "pr-$env:GITHUB_SHA" }
+          docker build --pull --file $env:DOCKERFILE --tag "runner-build:$env:GITHUB_SHA" `
+            --label "org.opencontainers.image.source=https://github.com/$env:GITHUB_REPOSITORY" `
+            --label "org.opencontainers.image.revision=$env:GITHUB_SHA" `
+            --label "org.opencontainers.image.version=$version" .
+          if ($LASTEXITCODE -ne 0) { throw 'Docker build failed' }
+      - name: Check packaged runner version
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $match = [regex]::Match((Get-Content $env:DOCKERFILE -Raw), '(?m)^ARG RUNNER_VERSION=(\d+\.\d+\.\d+)\r?$')
+          if (-not $match.Success) { throw 'Runner version is missing from Dockerfile' }
+          $actual = docker run --rm --entrypoint $env:RUNNER_EXECUTABLE "runner-build:$env:GITHUB_SHA" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Runner executable could not start' }
+          if (($actual -join "`n").Trim() -ne $match.Groups[1].Value) { throw 'Packaged runner version does not match Dockerfile' }
+      - name: Prepare registry image references
+        id: images
+        if: needs.release.outputs.version != ''
+        env:
+          DOCKERHUB_USER: ${{ secrets.USER_DOCKERHUB }}
+          ACR_URL: ${{ secrets.URL_AZURECONTAINERREG }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:DOCKERHUB_USER -notmatch '^[a-z0-9][a-z0-9_-]*$') { throw 'USER_DOCKERHUB must be a Docker Hub namespace' }
+          $address = $env:ACR_URL.Trim()
+          if (-not $address) { throw 'URL_AZURECONTAINERREG is required' }
+          if ($address -notmatch '^https?://') { $address = "https://$address" }
+          $registry = [uri]$address
+          if (-not $registry.IsAbsoluteUri -or $registry.Scheme -ne 'https' -or $registry.AbsolutePath -ne '/' -or $registry.UserInfo -or $registry.Query -or $registry.Fragment) {
+            throw 'URL_AZURECONTAINERREG must be a registry hostname or HTTPS origin without a path'
+          }
+          "registry=$($registry.Authority)" >> $env:GITHUB_OUTPUT
+          "dockerhub=$env:DOCKERHUB_USER/github-actions-runner" >> $env:GITHUB_OUTPUT
+          "acr=$($registry.Authority)/github-actions-runner" >> $env:GITHUB_OUTPUT
+      - name: Login to Docker Hub
+        if: needs.release.outputs.version != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.USER_DOCKERHUB }}
+          password: ${{ secrets.PAT_DOCKERHUB }}
+      - name: Login to private registry
+        if: needs.release.outputs.version != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.images.outputs.registry }}
+          username: ${{ secrets.USER_AZURECONTAINERREG }}
+          password: ${{ secrets.PW_AZURECONTAINERREG }}
+      - name: Publish to both registries
+        if: needs.release.outputs.version != ''
+        env:
+          DOCKERHUB_IMAGE: ${{ steps.images.outputs.dockerhub }}
+          ACR_IMAGE: ${{ steps.images.outputs.acr }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = "runner-build:$env:GITHUB_SHA"
+          foreach ($repository in @($env:DOCKERHUB_IMAGE, $env:ACR_IMAGE)) {
+            $target = "${repository}:$env:RELEASE_VERSION-$env:VARIANT"
+            docker tag $source $target
+            if ($LASTEXITCODE -ne 0) { throw 'Image tagging failed' }
+            docker push $target
+            if ($LASTEXITCODE -ne 0) { throw 'Versioned image push failed' }
+          }
+          foreach ($repository in @($env:DOCKERHUB_IMAGE, $env:ACR_IMAGE)) {
+            $target = "${repository}:latest-$env:VARIANT"
+            docker tag $source $target
+            if ($LASTEXITCODE -ne 0) { throw 'Latest image tagging failed' }
+            docker push $target
+            if ($LASTEXITCODE -ne 0) { throw 'Latest image push failed' }
+          }

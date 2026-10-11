@@ -1,6 +1,9 @@
 # escape=`
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
+LABEL owner="luth2" `
+    org.opencontainers.image.authors="luth2 (https://github.com/luth2)"
+
 SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 ARG RUNNER_VERSION=2.337.0

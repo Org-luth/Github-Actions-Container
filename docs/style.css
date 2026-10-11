@@ -1,0 +1,46 @@
+:root {
+  color-scheme: light;
+  --ink: #22292b;
+  --muted: #596368;
+  --line: #d8dfe0;
+  --accent: #126c54;
+  --paper: #ffffff;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 1rem; }
+body { margin: 0; color: var(--ink); background: #f4f6f5; font: 16px/1.65 "Trebuchet MS", Verdana, sans-serif; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 3px solid #dc793c; outline-offset: 4px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.1rem max(1.25rem, calc((100% - 1040px) / 2)); border-bottom: 1px solid var(--line); background: var(--paper); }
+.brand { font-weight: 700; color: var(--ink); text-decoration: none; }
+nav { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+main { max-width: 1040px; margin: auto; padding: 2rem 1.25rem 3rem; }
+.title-row { border-bottom: 3px solid var(--accent); padding-bottom: 1rem; }
+.eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; margin: 0; }
+h1 { font: 700 36px/1.15 Georgia, serif; margin: .6rem 0; overflow-wrap: anywhere; }
+h2 { font: 700 28px/1.2 Georgia, serif; }
+h3 { font-size: 21px; margin-top: 2rem; }
+h4 { font-size: 17px; }
+p, li { overflow-wrap: anywhere; }
+figure { margin: 1.5rem 0; overflow-x: auto; }
+figure img { display: block; width: 100%; min-width: 720px; height: auto; }
+section { padding: 1rem 0 2rem; border-bottom: 1px solid var(--line); }
+section > h2 { padding-bottom: .5rem; border-bottom: 1px solid var(--line); }
+pre { padding: 1rem; overflow-x: auto; border-left: 3px solid var(--accent); background: #e9efed; font-size: 13px; line-height: 1.6; }
+code { font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
+:not(pre) > code { background: #e9efed; padding: .15rem .3rem; border-radius: 3px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+th, td { padding: .65rem; text-align: left; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; vertical-align: top; }
+th { background: #e9efed; }
+footer { max-width: 1040px; padding: 1.25rem; margin: auto; color: var(--muted); font-size: 14px; }
+.skip-link { position: absolute; top: -100px; padding: .75rem; background: var(--paper); }
+.skip-link:focus { top: 0; }
+@media (max-width: 600px) {
+  header { align-items: flex-start; flex-direction: column; padding: 1rem; }
+  main { padding: 1.5rem 1rem; }
+  h1 { font-size: 28px; }
+  th, td { padding: .5rem .3rem; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}

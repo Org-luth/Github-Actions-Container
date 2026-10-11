@@ -80,11 +80,12 @@ jobs:
           branch: automation/update-actions-runner
           base: ${{ github.event.repository.default_branch }}
           delete-branch: true
+          assignees: luth2
           add-paths: |
             Dockerfile.linux
             Dockerfile.windows
-          commit-message: 'chore: update Actions Runner to ${{ steps.runner.outputs.version }}'
-          title: 'chore: update Actions Runner to ${{ steps.runner.outputs.version }}'
+          commit-message: 'fix(deps): update Actions Runner to ${{ steps.runner.outputs.version }}'
+          title: 'fix(deps): update Actions Runner to ${{ steps.runner.outputs.version }}'
           body: |
             Updates both runner Dockerfiles to version ${{ steps.runner.outputs.version }}.
 

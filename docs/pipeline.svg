@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="180" viewBox="0 0 960 180" role="img" aria-labelledby="title description">
+  <title id="title">Runner container release pipeline</title>
+  <desc id="description">Main commits lead to a semantic release, parallel Ubuntu and Windows builds, then Docker Hub and private registry publication.</desc>
+  <g fill="none" stroke="#126c54" stroke-width="2">
+    <path d="M175 90H235M435 90H480V45H520M480 90V135H520M715 45H755V90H800M715 135H755V90"/>
+  </g>
+  <g fill="#fff" stroke="#d8dfe0">
+    <rect x="0" y="55" width="175" height="70" rx="4"/>
+    <rect x="235" y="55" width="200" height="70" rx="4"/>
+    <rect x="520" y="10" width="195" height="70" rx="4"/>
+    <rect x="520" y="100" width="195" height="70" rx="4"/>
+    <rect x="800" y="55" width="159" height="70" rx="4"/>
+  </g>
+  <g fill="#22292b" font-family="Verdana, sans-serif" text-anchor="middle" font-size="15">
+    <text x="87" y="84">main</text><text x="87" y="107" font-size="12">Conventional Commits</text>
+    <text x="335" y="84">semantic-release</text><text x="335" y="107" font-size="12">Version + GitHub release</text>
+    <text x="617" y="39">Ubuntu 24.04</text><text x="617" y="62" font-size="12">linux / amd64</text>
+    <text x="617" y="129">Windows LTSC 2022</text><text x="617" y="152" font-size="12">windows / amd64</text>
+    <text x="879" y="84">Docker Hub</text><text x="879" y="107" font-size="12">+ private registry</text>
+  </g>
+</svg>
