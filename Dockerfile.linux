@@ -39,6 +39,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         docker-ce-cli docker-buildx-plugin git libgcc-s1 libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 libstdc++6 sudo zlib1g \
     && useradd --create-home --shell /bin/bash runner \
+    && install -d -o runner -g runner -m 0755 /home/runner/actions-runner \
     && printf 'runner ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/runner \
     && chmod 0440 /etc/sudoers.d/runner \
     && visudo -c \
@@ -51,6 +52,10 @@ COPY --from=build --chown=runner:runner /actions-runner/ ./
 USER runner
 
 RUN sudo -n true \
+    && test -w . \
+    && mkdir -p _diag _work \
+    && test -w _diag \
+    && test -w _work \
     && docker --version \
     && docker buildx version
 

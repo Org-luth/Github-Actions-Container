@@ -30,6 +30,9 @@ test('Linux multi-stage build isolates downloads and retains its runtime depende
   assert.equal([...dockerfile.matchAll(/^ARG RUNNER_VERSION=/gm)].length, 1);
   assert.equal([...dockerfile.matchAll(/^ARG RUNNER_SHA256=/gm)].length, 1);
   assert(runtime.includes('COPY --from=build --chown=runner:runner /actions-runner/ ./'));
+  const directorySetup = 'install -d -o runner -g runner -m 0755 /home/runner/actions-runner';
+  assert(runtime.includes(directorySetup));
+  assert(runtime.indexOf(directorySetup) < runtime.indexOf('WORKDIR /home/runner/actions-runner'));
   assert(runtime.includes('USER runner'));
   assert(runtime.includes('--no-install-recommends'));
   for (const dependency of ['ca-certificates', 'docker-ce-cli', 'docker-buildx-plugin', 'git', 'libgcc-s1', 'libicu74', 'libkrb5-3', 'liblttng-ust1t64', 'libssl3t64', 'libstdc++6', 'sudo', 'zlib1g']) {
@@ -39,6 +42,7 @@ test('Linux multi-stage build isolates downloads and retains its runtime depende
   assert(runtime.includes('chmod 0440 /etc/sudoers.d/runner'));
   assert(runtime.includes('visudo -c'));
   assert.match(runtime, /USER runner\s+RUN sudo -n true/);
+  assert.match(runtime, /USER runner[\s\S]*?&& test -w \.[\s\S]*?&& mkdir -p _diag _work[\s\S]*?&& test -w _diag[\s\S]*?&& test -w _work/);
   assert(build.includes('https://download.docker.com/linux/ubuntu/gpg'));
   assert(runtime.includes('COPY --from=build /docker.asc /etc/apt/keyrings/docker.asc'));
   assert(runtime.includes('Signed-By: /etc/apt/keyrings/docker.asc'));
