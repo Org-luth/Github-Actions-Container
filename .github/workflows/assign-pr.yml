@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Assign to luth2
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.addAssignees({
