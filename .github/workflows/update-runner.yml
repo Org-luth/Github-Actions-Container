@@ -1,0 +1,94 @@
+name: Update GitHub Actions Runner
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-actions-runner
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Update runner versions and checksums
+        id: runner
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { data: release } = await github.rest.repos.getLatestRelease({
+              owner: 'actions',
+              repo: 'runner',
+            });
+            if (release.draft || release.prerelease || !/^v\d+\.\d+\.\d+$/.test(release.tag_name)) {
+              throw new Error('Expected a stable runner release with a semantic version');
+            }
+            const version = release.tag_name.slice(1);
+            const platforms = [
+              { file: 'Dockerfile.linux', asset: `actions-runner-linux-x64-${version}.tar.gz` },
+              { file: 'Dockerfile.windows', asset: `actions-runner-win-x64-${version}.zip` },
+            ];
+            const updates = platforms.map(({ file, asset: name }) => {
+              const assets = release.assets.filter(asset => asset.name === name);
+              if (assets.length !== 1 || assets[0].state !== 'uploaded' || !/^sha256:[a-f0-9]{64}$/.test(assets[0].digest || '')) {
+                throw new Error(`Missing asset or SHA256 digest: ${name}`);
+              }
+              const original = fs.readFileSync(file, 'utf8');
+              const versions = [...original.matchAll(/^ARG RUNNER_VERSION=(\d+\.\d+\.\d+)\r?$/gm)];
+              const checksums = [...original.matchAll(/^ARG RUNNER_SHA256=[a-f0-9]{64}\r?$/gm)];
+              if (versions.length !== 1 || checksums.length !== 1) {
+                throw new Error(`Expected exactly one runner version and checksum in ${file}`);
+              }
+              const current = versions[0][1].split('.').map(Number);
+              const latest = version.split('.').map(Number);
+              const difference = latest.map((part, index) => part - current[index]).find(part => part !== 0);
+              if (difference < 0) {
+                throw new Error(`Refusing to downgrade ${file} from ${versions[0][1]} to ${version}`);
+              }
+              const updated = original
+                .replace(/^ARG RUNNER_VERSION=\d+\.\d+\.\d+(?=\r?$)/m, `ARG RUNNER_VERSION=${version}`)
+                .replace(/^ARG RUNNER_SHA256=[a-f0-9]{64}(?=\r?$)/m, `ARG RUNNER_SHA256=${assets[0].digest.slice(7)}`);
+              return { file, original, updated };
+            });
+            for (const { file, original, updated } of updates) {
+              if (original !== updated) {
+                fs.writeFileSync(file, updated);
+                core.info(`Updated ${file} to ${version}`);
+              }
+            }
+            core.setOutput('version', version);
+            core.setOutput('release-url', `https://github.com/actions/runner/releases/tag/v${version}`);
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/update-actions-runner
+          base: ${{ github.event.repository.default_branch }}
+          delete-branch: true
+          add-paths: |
+            Dockerfile.linux
+            Dockerfile.windows
+          commit-message: 'chore: update Actions Runner to ${{ steps.runner.outputs.version }}'
+          title: 'chore: update Actions Runner to ${{ steps.runner.outputs.version }}'
+          body: |
+            Updates both runner Dockerfiles to version ${{ steps.runner.outputs.version }}.
+
+            SHA256 checksums are taken from the official actions/runner release assets.
+            The Dockerfiles verify these checksums during the image build.
+
+            Release notes: ${{ steps.runner.outputs.release-url }}

@@ -1,0 +1,26 @@
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+ARG RUNNER_VERSION=2.337.0
+ARG RUNNER_SHA256=1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc
+
+ENV RUNNER_URL="" `
+    RUNNER_NAME=""
+
+WORKDIR C:\actions-runner
+
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Invoke-WebRequest -UseBasicParsing `
+        -Uri ('https://github.com/actions/runner/releases/download/v{0}/actions-runner-win-x64-{0}.zip' -f $env:RUNNER_VERSION) `
+        -OutFile runner.zip; `
+    if ((Get-FileHash -Path runner.zip -Algorithm SHA256).Hash -ne $env:RUNNER_SHA256) { throw 'Runner checksum did not match' }; `
+    Expand-Archive -Path runner.zip -DestinationPath .; `
+    Remove-Item runner.zip; `
+    icacls C:\actions-runner /grant 'ContainerUser:(OI)(CI)M' /T; `
+    if ($LASTEXITCODE -ne 0) { throw 'Could not grant runner directory permissions' }
+
+USER ContainerUser
+
+CMD ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; if ([string]::IsNullOrWhiteSpace($env:RUNNER_URL)) { throw 'Set RUNNER_URL to the GitHub organization or repository URL' }; if ([string]::IsNullOrWhiteSpace($env:RUNNER_TOKEN)) { throw 'Set RUNNER_TOKEN to a GitHub runner registration token' }; if ([string]::IsNullOrWhiteSpace($env:RUNNER_NAME)) { throw 'Set RUNNER_NAME to the runner name and runs-on label' }; if (-not (Test-Path .runner)) { & .\\config.cmd --unattended --url $env:RUNNER_URL --token $env:RUNNER_TOKEN --name $env:RUNNER_NAME --labels $env:RUNNER_NAME --work _work --replace; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }; Remove-Item Env:RUNNER_TOKEN; & .\\run.cmd; exit $LASTEXITCODE"]
