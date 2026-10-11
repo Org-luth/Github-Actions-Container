@@ -56,11 +56,12 @@ test('release output supports retries without republishing old or draft releases
       async () => result,
       (file, content) => outputs.push(content),
       (command, args) => args.includes('--points-at') ? tags : latest,
-      async url => {
+      async (url, options) => {
         assert.equal(url, 'https://api.github.com/repos/Org-luth/Github-Actions-Container/releases/tags/v1.0.0');
+        assert.equal(options.headers.Authorization, 'Bearer test-only');
         return { ok: true, json: async () => release };
       },
-      { env: { GITHUB_REPOSITORY: 'Org-luth/Github-Actions-Container', GH_TOKEN: 'test-only', GITHUB_OUTPUT: 'mock-output' } },
+      { env: { GITHUB_REPOSITORY: 'Org-luth/Github-Actions-Container', GITHUB_TOKEN: 'test-only', GITHUB_OUTPUT: 'mock-output' } },
       { log() {} },
     );
     return outputs;
@@ -71,6 +72,32 @@ test('release output supports retries without republishing old or draft releases
   await assert.rejects(run({ tags: 'v1.0.0', latest: 'v1.1.0\nv1.0.0' }), /older release/);
   await assert.rejects(run({ tags: 'v1.0.0\nv1.1.0' }), /Multiple release tags/);
   await assert.rejects(run({ tags: 'v1.0.0', release: { draft: true } }), /published stable/);
+});
+
+test('release uses installation-token Git authentication rather than PAT authentication', async () => {
+  const config = workflow('release');
+  const environment = config.jobs.release.steps.find(step => step.id === 'semantic').env;
+  assert.equal(environment.GITHUB_TOKEN, '${{ secrets.GITHUB_TOKEN }}');
+  assert(!('GH_TOKEN' in environment));
+  assert.equal(config.jobs.release.permissions.contents, 'write');
+
+  const source = read('node_modules/semantic-release/lib/get-git-auth-url.js')
+    .replace(/^import .*;\n/gm, '')
+    .replace('export default async (context) => {', 'return async (context) => {');
+  const { format, parse } = await import('node:url');
+  const getAuthUrl = new Function('format', 'parse', 'isNil', 'hostedGitInfo', 'debugAuthUrl', 'verifyAuth', source)(
+    format, parse, value => value == null, { fromUrl: () => null }, () => () => {},
+    async () => { throw new Error('No persisted checkout credentials'); },
+  );
+  const authUrl = await getAuthUrl({
+    cwd: '.',
+    env: { GITHUB_ACTION: 'semantic', GITHUB_TOKEN: 'test-only' },
+    branch: { name: 'main' },
+    options: { repositoryUrl: 'https://github.com/Org-luth/Github-Actions-Container.git' },
+  });
+  const parsed = new URL(authUrl);
+  assert.equal(parsed.username, 'x-access-token');
+  assert.equal(parsed.password, 'test-only');
 });
 
 test('build matrix uses native Linux and Windows engines and publishes only released versions', () => {

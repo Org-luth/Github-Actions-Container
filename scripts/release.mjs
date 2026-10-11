@@ -24,7 +24,7 @@ if (!version) {
     const response = await fetch(`https://api.github.com/repos/${repository}/releases/tags/${tags[0]}`, {
       headers: {
         Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${process.env.GH_TOKEN}`,
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN || process.env.GH_TOKEN}`,
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
