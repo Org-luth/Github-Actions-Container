@@ -58,8 +58,7 @@ LABEL owner="luth2" `
 SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 ENV RUNNER_URL="" `
-    RUNNER_NAME="" `
-    PATH="C:\docker;C:\git\cmd;${PATH}"
+    RUNNER_NAME=""
 
 WORKDIR C:\actions-runner
 
@@ -73,7 +72,11 @@ USER ContainerAdministrator
 RUN New-Item -Path .permissions-check -ItemType File -ErrorAction Stop | Out-Null; `
     Remove-Item -LiteralPath .permissions-check -ErrorAction Stop; `
     New-Item -Path _diag, _work -ItemType Directory -Force | Out-Null; `
-    git --version; `
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); `
+    if ([string]::IsNullOrWhiteSpace($machinePath)) { throw 'Windows machine PATH is empty' }; `
+    [Environment]::SetEnvironmentVariable('Path', 'C:\docker;C:\git\cmd;' + $machinePath, 'Machine')
+
+RUN git --version; `
     if ($LASTEXITCODE -ne 0) { throw 'Git is not available' }; `
     docker --version; `
     if ($LASTEXITCODE -ne 0) { throw 'Docker CLI is not available' }; `

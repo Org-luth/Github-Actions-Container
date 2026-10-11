@@ -228,7 +228,6 @@ test('Windows multi-stage build includes verified clients and runs as administra
   assert(runtime.includes('COPY --from=build C:/tools/docker/docker.exe C:/docker/docker.exe'));
   assert(runtime.includes('COPY --from=build ["C:/tools/cli-plugins/", "C:/Program Files/Docker/cli-plugins/"]'));
   assert(runtime.includes('COPY --from=build C:/tools/git/ C:/git/'));
-  assert(runtime.includes('PATH="C:\\docker;C:\\git\\cmd;${PATH}"'));
   assert(!/Invoke-WebRequest|Expand-Archive|dockerd|icacls|ContainerUser/.test(runtime));
   assert.match(runtime, /USER ContainerAdministrator\s+RUN New-Item -Path \.permissions-check[\s\S]*?Remove-Item -LiteralPath \.permissions-check/);
   assert(runtime.includes('New-Item -Path _diag, _work -ItemType Directory -Force'));
@@ -237,13 +236,27 @@ test('Windows multi-stage build includes verified clients and runs as administra
   }
 });
 
+test('Windows preserves its machine PATH instead of overriding it with Docker ENV', () => {
+  const dockerfile = read('Dockerfile.windows');
+  const instructions = dockerfile.replace(/`\r?\n\s*/g, ' ');
+  const environment = [...instructions.matchAll(/^ENV (.+)$/gm)].map(match => match[1]).join(' ');
+  assert(!/\bPATH=/i.test(environment));
+  assert(!/\$\{PATH\}/i.test(dockerfile));
+  assert(dockerfile.includes("$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')"));
+  assert(dockerfile.includes("if ([string]::IsNullOrWhiteSpace($machinePath)) { throw 'Windows machine PATH is empty' }"));
+  const persistPath = "[Environment]::SetEnvironmentVariable('Path', 'C:\\docker;C:\\git\\cmd;' + $machinePath, 'Machine')";
+  assert(dockerfile.includes(persistPath));
+  assert.match(dockerfile, /SetEnvironmentVariable\('Path',[^\n]+\)\s+RUN git --version/);
+  assert(dockerfile.indexOf(persistPath) < dockerfile.indexOf('\nRUN git --version'));
+});
+
 test('PowerShell build commands and Windows startup parse correctly', { skip: !powerShellAvailable }, () => {
   const scripts = workflow('release').jobs.build.steps.filter(step => step.run).map(step => step.run);
   const dockerfile = read('Dockerfile.windows');
   const command = JSON.parse(dockerfile.split('\n').find(line => line.startsWith('CMD ')).slice(4)).at(-1);
   scripts.push(command);
   const buildCommands = [...dockerfile.replace(/`\r?\n\s*/g, ' ').matchAll(/^RUN (.+)$/gm)].map(match => match[1]);
-  assert.equal(buildCommands.length, 5);
+  assert.equal(buildCommands.length, 6);
   scripts.push(...buildCommands);
   for (const script of scripts) {
     const result = spawnSync(powerShell, ['-NoLogo', '-NoProfile', '-Command',
