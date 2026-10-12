@@ -1,7 +1,7 @@
 FROM ubuntu:24.04 AS build
 
-ARG RUNNER_VERSION=2.337.0
-ARG RUNNER_SHA256=70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613
+ARG RUNNER_VERSION=2.338.0
+ARG RUNNER_SHA256=af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gzip tar \
