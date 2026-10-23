@@ -37,8 +37,8 @@ RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tl
     Expand-Archive -Path git.zip -DestinationPath C:\tools\git; `
     Remove-Item git.zip
 
-ARG RUNNER_VERSION=2.337.0
-ARG RUNNER_SHA256=1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc
+ARG RUNNER_VERSION=2.338.1
+ARG RUNNER_SHA256=478f533ac2c349040fbaea7e158f7f7d0235085cf35bc81f661af0c715207ff9
 
 WORKDIR C:\actions-runner
 
