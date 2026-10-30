@@ -165,6 +165,15 @@ test('all PR sources assign luth2 and the privileged workflow does not checkout 
   assert(update.title.startsWith('fix(deps):'));
 });
 
+test('runner update pins its host image and grants PR creation permissions', () => {
+  const config = workflow('update-runner');
+  assert.equal(config.jobs.update['runs-on'], 'ubuntu-24.04');
+  assert.deepEqual(config.jobs.update.permissions, {
+    contents: 'write',
+    'pull-requests': 'write',
+  });
+});
+
 test('runner update validates both assets before writing and is idempotent', async () => {
   const script = workflow('update-runner').jobs.update.steps.find(step => step.id === 'runner').with.script;
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
